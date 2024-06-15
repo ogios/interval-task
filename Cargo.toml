@@ -1,0 +1,8 @@
+[package]
+name = "task-control"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-channel = "2.3.1"
+spin_sleep = "1.2.0"
