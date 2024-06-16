@@ -9,13 +9,7 @@ Also provide a `channel` which wraps up `runner`.
 
 Examples of executing task 120 times in 1 second
 
-<details>
-
-  <summary>
-
-    ## channel
-
-  </summary>
+## channel
 
 ```rust
 use interval_task::{
@@ -35,15 +29,7 @@ fn no_blocking() {
 }
 ```
 
-</details>
-
-<details>
-
-  <summary>
-
-    ## runner
-
-  </summary>
+## runner
 
 ```rust
 // manually call `close`
@@ -101,8 +87,6 @@ fn internal_close_example() {
     runner.join().unwrap(); // wait for `Task` close inside
 }
 ```
-
-</details>
 
 # Other
 
