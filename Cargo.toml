@@ -7,6 +7,7 @@ description = "Repeatedly execute a `Task` with fixed time delay. more than `set
 license = "MIT"
 repository = "https://github.com/ogios/interval-task"
 keywords = ["interval", "set-interval", "task", "time", "multithreading"]
+documentation = "https://docs.rs/interval-task/"
 
 [dependencies]
 async-channel = "2.3.1"
