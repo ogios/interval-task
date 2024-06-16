@@ -10,7 +10,7 @@
 ```rust
 // example 1
 fn external_close_example() {
-    use task_control::runner::{self, ExternalRunnerExt, FnMutTask, Task};
+    use interval_task::runner::{self, ExternalRunnerExt, FnMutTask, Task};
 
     struct TestTask(u32, async_channel::Sender<u8>);
     impl FnMutTask for TestTask {
@@ -38,7 +38,7 @@ fn external_close_example() {
 // example 2
 fn internal_close_example() {
     use std::time::{Duration, Instant};
-    use task_control::runner::{self, InternalRunnerExt, TaskWithHandle};
+    use interval_task::runner::{self, InternalRunnerExt, TaskWithHandle};
 
     struct RunnerTask(u32, Instant);
     impl runner::FnMutTaskWithHandle for RunnerTask {

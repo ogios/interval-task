@@ -1,4 +1,4 @@
-# task-control
+# interval-task
 
 This crate provides a [`runner`][`crate::runner`] to simulate what [`setInterval`](https://developer.mozilla.org/en-US/docs/Web/API/setInterval) does in JS which is repeatedly executing a task every given [`Duration`][`std::time::Duration`].
 

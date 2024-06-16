@@ -1,7 +1,12 @@
 [package]
-name = "task-control"
+name = "interval-task"
 version = "0.1.0"
 edition = "2021"
+authors = ["OGIOS <ogios@foxmail.com>"]
+description = "Repeatedly execute a `Task` with fixed time delay. more than `setInterval`"
+license = "MIT"
+repository = "https://github.com/ogios/interval-task"
+keywords = ["interval", "set-interval", "task", "time", "multithreading"]
 
 [dependencies]
 async-channel = "2.3.1"

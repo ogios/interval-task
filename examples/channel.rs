@@ -1,26 +1,19 @@
-use std::{
-    env::args,
-    time::{Duration, Instant},
-};
-use task_control::{
+use interval_task::{
     channel::{self, TASK_DONE},
     runner::ExternalRunnerExt,
 };
-extern crate task_control;
+use std::time::{Duration, Instant};
+extern crate interval_task;
 
 fn main() {
-    let mut arg = args();
-    arg.next().unwrap();
-    if let Some(i) = arg.next() {
-        if i == *"1" {
-            return a();
-        }
-    }
-    normal()
+    println!("blocking:");
+    blocking();
+    println!("no blocking:");
+    no_blocking();
 }
 
-fn normal() {
-    let (s, r, mut runner) = channel::new(Duration::from_micros(1_000_000 / 120));
+fn blocking() {
+    let (s, r, mut runner) = channel::new_blocking(Duration::from_micros(1_000_000 / 120));
     runner.start().unwrap();
     let start = Instant::now();
     for _ in 0..120 {
@@ -31,9 +24,13 @@ fn normal() {
     runner.close().unwrap();
 }
 
-#[allow(unused, dead_code)]
-fn a() {
-    let (s, r, mut handler) = channel::new(Duration::from_micros(1_000_000 / 120));
-    handler.start().unwrap();
-    handler.start().unwrap();
+fn no_blocking() {
+    let (r, mut runner) = channel::new(Duration::from_micros(1_000_000 / 120));
+    runner.start().unwrap();
+    let start = Instant::now();
+    for _ in 0..120 {
+        r.recv_blocking().unwrap();
+    }
+    println!("Elapsed: {:?}", start.elapsed());
+    runner.close().unwrap();
 }

@@ -1,23 +1,16 @@
 #![allow(dead_code)]
-use std::{
-    env::args,
-    time::{Duration, Instant},
-};
-extern crate task_control;
+use std::time::{Duration, Instant};
+extern crate interval_task;
 
 fn main() {
-    let mut arg = args();
-    arg.next().unwrap();
-    if let Some(i) = arg.next() {
-        if i == *"1" {
-            return external_close_example();
-        }
-    }
-    internal_close_example()
+    println!("internal close:");
+    internal_close_example();
+    println!("external close:");
+    external_close_example();
 }
 
 fn external_close_example() {
-    use task_control::runner::{self, ExternalRunnerExt, FnMutTask, Task};
+    use interval_task::runner::{self, ExternalRunnerExt, FnMutTask, Task};
 
     struct TestTask(u32, async_channel::Sender<u8>);
     impl FnMutTask for TestTask {
@@ -41,8 +34,8 @@ fn external_close_example() {
 }
 
 fn internal_close_example() {
+    use interval_task::runner::{self, InternalRunnerExt, TaskWithHandle};
     use std::time::{Duration, Instant};
-    use task_control::runner::{self, InternalRunnerExt, TaskWithHandle};
 
     struct RunnerTask(u32, Instant);
     impl runner::FnMutTaskWithHandle for RunnerTask {
