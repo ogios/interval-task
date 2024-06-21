@@ -34,24 +34,22 @@ fn no_blocking() {
 ```rust
 // manually call `close`
 fn external_close_example() {
-    use interval_task::runner::{self, ExternalRunnerExt, FnMutTask, Task};
+    use interval_task::runner::{self, ExternalRunnerExt};
 
-    struct TestTask(u32, async_channel::Sender<u8>);
-    impl FnMutTask for TestTask {
-        fn call_mut(&mut self) {
-            if self.0 == 119 {
-                self.1.send_blocking(0).unwrap();
-            } else {
-                self.0 += 1
-            }
-        }
-    }
-
+    let mut count = 0;
     let (s, r) = async_channel::bounded(1);
-    let mut runner = runner::new_external_close_runner(Duration::from_micros(1_000_000 / 120));
-    runner.set_task(Task::new_fn_mut_task(TestTask(0, s)));
+    let f = move || {
+        if count == 119 {
+            s.send_blocking(0).unwrap();
+        } else {
+            count += 1
+        }
+    };
 
-    runner.start().unwrap();    // start runner
+    let mut runner = runner::new_external_close_runner(Duration::from_micros(1_000_000 / 120));
+    runner.set_task(Box::new(f));
+
+    runner.start().unwrap(); // start runner
     let start = Instant::now(); // start count
     r.recv_blocking().unwrap(); // wait for signal from `Task`
     println!("Elapsed: {:?}", start.elapsed());
@@ -60,29 +58,26 @@ fn external_close_example() {
 
 // close inside `Task` by returning `bool`
 fn internal_close_example() {
-    use interval_task::runner::{self, InternalRunnerExt, TaskWithHandle};
+    use interval_task::runner::{self, InternalRunnerExt};
     use std::time::{Duration, Instant};
 
-    struct RunnerTask(u32, Instant);
-    impl runner::FnMutTaskWithHandle for RunnerTask {
-        fn call_mut(&mut self) -> bool {
-            if self.0 == 119 {
-                println!("{}", self.1.elapsed().as_secs_f64());
-                true
-            } else {
-                if self.0 == 0 {
-                    self.1 = Instant::now();
-                }
-                self.0 += 1;
-                false
+    let mut count = 0;
+    let mut ins = Instant::now();
+    let f = move || {
+        if count == 119 {
+            println!("{}", ins.elapsed().as_secs_f64());
+            true
+        } else {
+            if count == 0 {
+                ins = Instant::now();
             }
+            count += 1;
+            false
         }
-    }
+    };
+
     let mut runner = runner::new_internal_close_runner(Duration::from_micros(1_000_000 / 120));
-    runner.set_task(TaskWithHandle::new_fn_mut_task(RunnerTask(
-        0,
-        Instant::now(),
-    )));
+    runner.set_task(Box::new(f));
     runner.start().unwrap();
     runner.join().unwrap(); // wait for `Task` close inside
 }
@@ -90,4 +85,4 @@ fn internal_close_example() {
 
 # Other
 
-The exact time interval can not be guaranteed(around 0-2% extra time needed to execute logic on my laptop: [linux plateform with AMD r7-4800h, 3200mhz Ram], see also [To what point is thread::sleep accurate? ](https://www.reddit.com/r/rust/comments/15ql2af/to_what_point_is_threadsleep_accurate/))
+[To what point is thread::sleep accurate? ](https://www.reddit.com/r/rust/comments/15ql2af/to_what_point_is_threadsleep_accurate/)

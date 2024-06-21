@@ -3,7 +3,6 @@ use interval_task::{
     runner::ExternalRunnerExt,
 };
 use std::time::{Duration, Instant};
-extern crate interval_task;
 
 fn main() {
     println!("blocking:");

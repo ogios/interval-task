@@ -1,14 +1,13 @@
-# Runner
+#![allow(dead_code)]
+use std::time::{Duration, Instant};
 
-[Runner][`runner::Runner`] have 2 usage:
+fn main() {
+    println!("internal close:");
+    internal_close_example();
+    println!("external close:");
+    external_close_example();
+}
 
-- externally call [`runner::ExternalRunnerExt::close()`].
-- return [`true`] in [`task::FnTaskWithHandle::call`] or [`task::FnMutTaskWithHandle::call_mut`] and run [`runner::InternalRunnerExt::join()`] to wait until runner thread exit.
-
-## Examples
-
-```rust
-// example 1
 fn external_close_example() {
     use interval_task::runner::{self, ExternalRunnerExt};
 
@@ -24,14 +23,14 @@ fn external_close_example() {
 
     let mut runner = runner::new_external_close_runner(Duration::from_micros(1_000_000 / 120));
     runner.set_task(Box::new(f));
-    runner.start().unwrap();
-    let start = Instant::now();
-    r.recv_blocking().unwrap();
+
+    runner.start().unwrap(); // start runner
+    let start = Instant::now(); // start count
+    r.recv_blocking().unwrap(); // wait for signal from `Task`
     println!("Elapsed: {:?}", start.elapsed());
     runner.close().unwrap();
 }
 
-// example 2
 fn internal_close_example() {
     use interval_task::runner::{self, InternalRunnerExt};
     use std::time::{Duration, Instant};
@@ -54,6 +53,5 @@ fn internal_close_example() {
     let mut runner = runner::new_internal_close_runner(Duration::from_micros(1_000_000 / 120));
     runner.set_task(Box::new(f));
     runner.start().unwrap();
-    runner.join().unwrap();
+    runner.join().unwrap(); // wait for `Task` close inside
 }
-```
