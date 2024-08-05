@@ -4,40 +4,63 @@ use async_channel as ac;
 use std::thread::{self, JoinHandle, Thread};
 use std::time::{Duration, Instant};
 
-pub type TaskWithHandle<T> = Box<dyn Send + 'static + FnMut(&mut T) -> bool>;
-pub type CtxFunc<T> = Box<dyn Send + 'static + FnOnce() -> T>;
-
-pub struct Runner<T> {
-    task: Option<TaskWithHandle<T>>,
-    ctx_func: Option<CtxFunc<T>>,
+/// this function accepts raw impl FnMut
+/// if you have func within box, use [`Runner::new`]
+pub fn new_runner<T: 'static>(
     interval: Duration,
-
-    stop_signal_sender: Option<ac::Sender<()>>,
-    stopped_receiver: Option<ac::Receiver<()>>,
-    thread: Option<JoinHandle<()>>,
+    ctx_func: impl Send + 'static + FnOnce() -> T,
+    task: impl Send + 'static + FnMut(&mut T) -> bool,
+) -> Runner<T> {
+    Runner::new(interval, Box::new(task), Box::new(ctx_func))
 }
 
+/// return [`true`] to break the loop and stop runner
+/// don't forget you can call [`Runner::join`] to wait for runner thread to finish
+/// for arg, see [`CtxFunc<T>`]
+pub type TaskWithHandle<T> = Box<dyn Send + 'static + FnMut(&mut T) -> bool>;
+
+/// This will be executed inside runner thread when started
+/// And will be passed as arg to [`TaskWithHandle<T>`]
+pub type CtxFunc<T> = Box<dyn Send + 'static + FnOnce() -> T>;
+
+struct Task<T> {
+    task: TaskWithHandle<T>,
+    ctx_func: CtxFunc<T>,
+    interval: Duration,
+}
+unsafe impl<T> Send for Task<T> {}
+unsafe impl<T> Sync for Task<T> {}
+
+/// the basic runner
+/// the runner can only [`Runner::start`] once
+pub struct Runner<T> {
+    t: Option<Box<Task<T>>>,
+
+    stop_signal_sender: Option<ac::Sender<()>>,
+    thread: Option<JoinHandle<()>>,
+}
+unsafe impl<T> Send for Runner<T> {}
+unsafe impl<T> Sync for Runner<T> {}
+
 impl<T: 'static> Runner<T> {
-    pub fn new(
-        interval: Duration,
-        ctx_func: impl Send + 'static + FnOnce() -> T,
-        task: impl Send + 'static + FnMut(&mut T) -> bool,
-    ) -> Self {
+    pub fn new(interval: Duration, task: TaskWithHandle<T>, ctx_func: CtxFunc<T>) -> Self {
         Runner {
-            interval,
-            task: Some(Box::new(task)),
+            t: Some(Box::new(Task {
+                interval,
+                task,
+                ctx_func,
+            })),
             stop_signal_sender: None,
-            stopped_receiver: None,
             thread: None,
-            ctx_func: Some(Box::new(ctx_func)),
         }
     }
 
-    fn take_task(&mut self) -> Result<(CtxFunc<T>, TaskWithHandle<T>), &'static str> {
-        Ok((
-            self.ctx_func.take().ok_or("ctx func not set")?,
-            self.task.take().ok_or("task not set")?,
-        ))
+    fn take_task(&mut self) -> Result<Task<T>, &'static str> {
+        if let Some(t) = self.t.take() {
+            Ok(*t)
+        } else {
+            Err("ctx func not set")
+        }
     }
 
     pub fn get_thread_ref(&self) -> &Thread {
@@ -45,16 +68,19 @@ impl<T: 'static> Runner<T> {
     }
 
     pub fn start(&mut self) -> Result<(), &str> {
-        let (stopped_sender, stopped_receiver) = ac::bounded::<()>(1);
+        if self.thread.is_some() {
+            return Ok(());
+        }
+
         let (stop_signal_sender, stop_signal_receiver) = ac::bounded::<()>(1);
 
         self.stop_signal_sender = Some(stop_signal_sender);
-        self.stopped_receiver = Some(stopped_receiver);
 
-        let interval = self.interval;
-        let (ctx_func, mut task) = self.take_task().unwrap();
+        let task = self.take_task().unwrap();
         self.thread = Some(thread::spawn(move || {
-            let mut ctx = ctx_func();
+            let interval = task.interval;
+            let mut ctx = (task.ctx_func)();
+            let mut task = task.task;
 
             let mut last_cost = Duration::from_nanos(0);
 
@@ -78,10 +104,6 @@ impl<T: 'static> Runner<T> {
                     last_cost = last_cost_start.elapsed();
                 }
             }
-
-            if stopped_sender.force_send(()).is_err() {
-                panic!("[task-controler] Error sending stopped signal");
-            }
         }));
         Ok(())
     }
@@ -89,7 +111,6 @@ impl<T: 'static> Runner<T> {
     pub fn close(mut self) -> Result<(), &'static str> {
         if let Some(t) = self.thread.take() {
             let _ = self.stop_signal_sender.as_ref().unwrap().send_blocking(());
-            let _ = self.stopped_receiver.as_ref().unwrap().recv_blocking();
             t.join().unwrap();
             return Ok(());
         };
@@ -100,7 +121,6 @@ impl<T: 'static> Runner<T> {
         if let Some(t) = self.thread.take() {
             t.join().unwrap();
             let _ = self.stop_signal_sender.as_ref().unwrap().close();
-            let _ = self.stopped_receiver.as_ref().unwrap().close();
             return Ok(());
         };
         Err("no task running")
@@ -115,7 +135,7 @@ mod tests {
 
     fn normal_internal(fps: u64) {
         let interval = Duration::from_micros(1_000_000 / fps);
-        let mut runner = Runner::new(
+        let mut runner = new_runner(
             interval,
             || Rc::new(Cell::new(0)),
             move |count| {
