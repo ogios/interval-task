@@ -2,19 +2,6 @@
 
 This is a wrapper of [runner][`crate::runner`].
 
-It returns sender & receiver created by [`async_channel`], and a [`Runner`][`crate::runner::Runner`] instance that implements [`ExternalRunnerExt`][`crate::runner::ExternalRunnerExt`].
-
-It will send [`TASK_SIGNAL`] signal and wait for [`TASK_DONE`] signal repeatedly every fixed [`Duration`] .
-
-## Example
-
-```rust
-let (r, mut runner) = channel::new(Duration::from_micros(1_000_000 / 120));
-runner.start().unwrap();
-let start = Instant::now();
-for _ in 0..120 {
-    r.recv_blocking().unwrap();
-}
-println!("Elapsed: {:?}", start.elapsed());
-runner.close().unwrap();
-```
+- block: use `send_blocking` and blocked in the next loop if you don't `recv`.
+- non-block: use `force_send` to replace the last signal.
+- unbounded: use [`async_channel::unbounded`] which would be `non-block`.

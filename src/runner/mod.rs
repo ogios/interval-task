@@ -4,177 +4,154 @@ use async_channel as ac;
 use std::thread::{self, JoinHandle, Thread};
 use std::time::{Duration, Instant};
 
-pub trait ExternalRunnerExt {
-    fn set_task(&mut self, t: Task);
-    fn start(&mut self) -> Result<(), &str>;
-    fn close(self) -> Result<(), &'static str>;
-}
-pub trait InternalRunnerExt {
-    fn set_task(&mut self, t: TaskWithHandle);
-    fn start(&mut self) -> Result<(), &str>;
-    fn join(self) -> Result<(), &'static str>;
-}
-
-pub type Task = Box<dyn FnMut() + Send + 'static>;
-pub type TaskWithHandle = Box<dyn Send + 'static + FnMut() -> bool>;
+pub type TaskWithHandle<T> = Box<dyn Send + 'static + FnMut(&mut T) -> bool>;
+pub type CtxFunc<T> = Box<dyn Send + 'static + FnOnce() -> T>;
 
 pub struct Runner<T> {
-    task: Option<T>,
+    task: Option<TaskWithHandle<T>>,
+    ctx_func: Option<CtxFunc<T>>,
     interval: Duration,
-    s: Option<ac::Sender<u8>>,
-    r: Option<ac::Receiver<u8>>,
+
+    stop_signal_sender: Option<ac::Sender<()>>,
+    stopped_receiver: Option<ac::Receiver<()>>,
     thread: Option<JoinHandle<()>>,
 }
 
-impl<T> Runner<T> {
-    pub fn new(interval: Duration) -> Runner<T> {
+impl<T: 'static> Runner<T> {
+    pub fn new(
+        interval: Duration,
+        ctx_func: impl Send + 'static + FnOnce() -> T,
+        task: impl Send + 'static + FnMut(&mut T) -> bool,
+    ) -> Self {
         Runner {
             interval,
-            task: None,
-            s: None,
-            r: None,
+            task: Some(Box::new(task)),
+            stop_signal_sender: None,
+            stopped_receiver: None,
             thread: None,
+            ctx_func: Some(Box::new(ctx_func)),
         }
     }
 
-    fn take_task(&mut self) -> Result<T, &'static str> {
-        self.task.take().ok_or("task not set")
-    }
-
-    fn _start_runner(&mut self, task: Task) {
-        let (sub_sender, main_receiver) = ac::bounded::<u8>(1);
-        let (main_sender, sub_receiver) = ac::bounded::<u8>(1);
-
-        self.s = Some(main_sender);
-        self.r = Some(main_receiver);
-
-        let interval = self.interval;
-        let mut task = task;
-        self.thread = Some(thread::spawn(move || {
-            sub_sender.send_blocking(0).unwrap();
-            loop {
-                if sub_receiver.try_recv().is_ok() {
-                    break;
-                }
-
-                let frame_start = Instant::now();
-
-                task();
-
-                if let Some(gap) = interval.checked_sub(frame_start.elapsed()) {
-                    spin_sleep::sleep(gap);
-                }
-            }
-
-            if sub_sender.send_blocking(0).is_err() {
-                panic!("[task-controler] Error sending stopped signal");
-            }
-        }));
+    fn take_task(&mut self) -> Result<(CtxFunc<T>, TaskWithHandle<T>), &'static str> {
+        Ok((
+            self.ctx_func.take().ok_or("ctx func not set")?,
+            self.task.take().ok_or("task not set")?,
+        ))
     }
 
     pub fn get_thread_ref(&self) -> &Thread {
         self.thread.as_ref().unwrap().thread()
     }
-}
 
-impl ExternalRunnerExt for Runner<Task> {
-    fn set_task(&mut self, t: Task) {
-        self.task = Some(t);
-    }
+    pub fn start(&mut self) -> Result<(), &str> {
+        let (stopped_sender, stopped_receiver) = ac::bounded::<()>(1);
+        let (stop_signal_sender, stop_signal_receiver) = ac::bounded::<()>(1);
 
-    fn start(&mut self) -> Result<(), &str> {
-        let task = self.take_task().unwrap();
-
-        let (sub_sender, main_receiver) = ac::bounded::<u8>(1);
-        let (main_sender, sub_receiver) = ac::bounded::<u8>(1);
-
-        self.s = Some(main_sender);
-        self.r = Some(main_receiver);
+        self.stop_signal_sender = Some(stop_signal_sender);
+        self.stopped_receiver = Some(stopped_receiver);
 
         let interval = self.interval;
-        let mut task = task;
+        let (ctx_func, mut task) = self.take_task().unwrap();
         self.thread = Some(thread::spawn(move || {
-            sub_sender.send_blocking(0).unwrap();
+            let mut ctx = ctx_func();
+
+            let mut last_cost = Duration::from_nanos(0);
+
             loop {
-                if sub_receiver.try_recv().is_ok() {
+                let frame_start = Instant::now() - last_cost;
+
+                if let Err(async_channel::TryRecvError::Empty) = stop_signal_receiver.try_recv() {
+                } else {
                     break;
                 }
 
-                let frame_start = Instant::now();
+                if task(&mut ctx) {
+                    break;
+                };
 
-                task();
-
+                let last_cost_start = Instant::now();
                 if let Some(gap) = interval.checked_sub(frame_start.elapsed()) {
                     spin_sleep::sleep(gap);
+                    last_cost = last_cost_start.elapsed() - gap;
+                } else {
+                    last_cost = last_cost_start.elapsed();
                 }
             }
 
-            if sub_sender.send_blocking(0).is_err() {
+            if stopped_sender.force_send(()).is_err() {
                 panic!("[task-controler] Error sending stopped signal");
             }
         }));
         Ok(())
     }
-    /// !!! DO NOT USE THIS IF `true` WILL BE RETURNED FROM `Task`, INSTEAD, USE `join()`.
-    /// Send `signal` to runner, wait for response and join thread.
-    /// Gets dropped after call
-    fn close(mut self) -> Result<(), &'static str> {
+
+    pub fn close(mut self) -> Result<(), &'static str> {
         if let Some(t) = self.thread.take() {
-            self.s.as_ref().unwrap().send_blocking(0).unwrap();
-            self.r.as_ref().unwrap().recv_blocking().unwrap();
-            t.join().unwrap();
-            return Ok(());
-        };
-        Err("no task running")
-    }
-}
-
-impl InternalRunnerExt for Runner<TaskWithHandle> {
-    fn start(&mut self) -> Result<(), &'static str> {
-        let task = self.take_task().unwrap();
-
-        let (sub_sender, main_receiver) = ac::bounded::<u8>(1);
-
-        self.s = None;
-        self.r = Some(main_receiver);
-
-        let interval = self.interval;
-        let mut task = task;
-        self.thread = Some(thread::spawn(move || {
-            sub_sender.send_blocking(0).unwrap();
-            loop {
-                let frame_start = Instant::now();
-
-                if task() {
-                    return;
-                };
-
-                if let Some(gap) = interval.checked_sub(frame_start.elapsed()) {
-                    spin_sleep::sleep(gap);
-                }
-            }
-        }));
-        Ok(())
-    }
-
-    /// object moved and gets dropped after call
-    fn join(mut self) -> Result<(), &'static str> {
-        if let Some(t) = self.thread.take() {
+            let _ = self.stop_signal_sender.as_ref().unwrap().send_blocking(());
+            let _ = self.stopped_receiver.as_ref().unwrap().recv_blocking();
             t.join().unwrap();
             return Ok(());
         };
         Err("no task running")
     }
 
-    fn set_task(&mut self, t: TaskWithHandle) {
-        self.task = Some(t);
+    pub fn join(mut self) -> Result<(), &'static str> {
+        if let Some(t) = self.thread.take() {
+            t.join().unwrap();
+            let _ = self.stop_signal_sender.as_ref().unwrap().close();
+            let _ = self.stopped_receiver.as_ref().unwrap().close();
+            return Ok(());
+        };
+        Err("no task running")
     }
 }
 
-pub fn new_external_close_runner(interval: Duration) -> Runner<Task> {
-    Runner::new(interval)
-}
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc};
 
-pub fn new_internal_close_runner(interval: Duration) -> Runner<TaskWithHandle> {
-    Runner::new(interval)
+    use super::*;
+
+    fn normal_internal(fps: u64) {
+        let interval = Duration::from_micros(1_000_000 / fps);
+        let mut runner = Runner::new(
+            interval,
+            || Rc::new(Cell::new(0)),
+            move |count| {
+                count.set(count.get() + 1);
+                count.get() == fps
+            },
+        );
+
+        let start = Instant::now();
+        runner.start().unwrap();
+        runner.join().unwrap();
+        println!("Elapsed: {:?}", start.elapsed());
+    }
+
+    #[test]
+    fn runner_test_60_fps() {
+        normal_internal(60)
+    }
+
+    #[test]
+    fn runner_test_120_fps() {
+        normal_internal(120)
+    }
+
+    #[test]
+    fn runner_test_144_fps() {
+        normal_internal(144)
+    }
+
+    #[test]
+    fn runner_test_240_fps() {
+        normal_internal(240)
+    }
+
+    #[test]
+    fn runner_test_1000_fps() {
+        normal_internal(1000)
+    }
 }
