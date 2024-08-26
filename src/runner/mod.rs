@@ -127,6 +127,16 @@ impl<T: 'static> Runner<T> {
     }
 }
 
+impl<T> Default for Runner<T> {
+    fn default() -> Self {
+        Self {
+            t: None,
+            stop_signal_sender: None,
+            thread: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::Cell, rc::Rc};
