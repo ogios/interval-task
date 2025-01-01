@@ -110,9 +110,35 @@ impl<T: 'static> Runner<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::{cell::Cell, rc::Rc, sync::Mutex};
 
     use super::*;
+
+    #[test]
+    fn arc_test() {
+        let interval = Duration::from_micros(1_000_000 / 60);
+        let count = Arc::new(Mutex::new(0));
+        let count_c = count.clone();
+        let mut runner = new_runner(
+            interval,
+            || (),
+            move |_| {
+                let mut c = count.lock().unwrap();
+                *c += 1;
+                false
+            },
+        );
+
+        let start = Instant::now();
+        runner.start().unwrap();
+        std::thread::sleep(Duration::from_millis(1000));
+        drop(runner);
+        println!("Elapsed: {:?}", start.elapsed());
+
+        let c = *count_c.lock().unwrap();
+        println!("count: {}", c);
+        assert!(c >= 60);
+    }
 
     fn normal_internal(fps: u64) {
         let interval = Duration::from_micros(1_000_000 / fps);
